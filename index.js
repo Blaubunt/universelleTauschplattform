@@ -1,30 +1,41 @@
 const express = require('express')
 const path = require('path')
 const PORT = process.env.PORT || 5000
-
+require('dotenv').config({path:path.resolve(__dirname, './public/.env')});
 const auth = require('./authentication')
 var cors = require('cors')
 
 const uuid = require('uuid/v4');
 //Firebase Database initialization
-var admin = require("firebase-admin");
 var firebase=require('firebase');
 require('dotenv').config();
-
 const firebaseConfig = {     
-  apiKey: process.env.API_KEY,     
-  authDomain: process.env.AUTH_DOMAIN,     
-  databaseURL: process.env.DATABASE_URL,     
-  projectId: process.env.PROJECT_URL,       
-  messagingSenderId: process.env.MESSAGING_SENDER_ID,     
-  appId: process.env.APP_ID   };   // Initialize Firebase   firebase.initializeApp(firebaseConfig);
-
+  apiKey: process.env.VUE_APP_API_KEY,     
+  authDomain: process.env.VUE_APP_AUTH_DOMAIN,     
+  databaseURL: process.env.VUE_APP_DATABASE_URL,     
+  projectId: process.env.VUE_APP_PROJECT_URL,         
+  appId: process.env.VUE_APP_APP_ID   };   // Initialize Firebase   firebase.initializeApp(firebaseConfig);
+process.env.testvalue="testvalue";
   firebase.initializeApp(firebaseConfig);
 
+  
 var fireData = firebase.database();
+const geofire = require('geofire');
+var geoRef = new geofire.GeoFire(fireData.ref('/tradeLocations'));
 
 async function searchItems(req, res) {
-  tlSplit = req.query.topLeftLocation ?
+  let geoQuery = geoRef.query({center: [8.88058,47.7877], radius:500});
+  let trades = await fireData.ref('/trades').once('value');
+  let radiusTrades=[];
+  geoQuery.on("key_entered", function(key, location) {
+    trades.forEach(elem => elem.forEach(child=>child.key==key && radiusTrades.push(child)));
+  });
+  geoQuery.on('ready',function(){
+    geoQuery.cancel();
+    return jsonResponse(res, radiusTrades)
+  });
+
+  /* tlSplit = req.query.topLeftLocation ?
     req.query.topLeftLocation.split(",")
     : [];
   lrSplit = req.query.lowerRightLocation ?
@@ -61,7 +72,7 @@ async function searchItems(req, res) {
       returnItems.push(child.val());
     })
   });
-  return jsonResponse(res, returnItems);
+  return jsonResponse(res, returnItems); */
 }
 
 async function chatMessages(req, res) {
@@ -116,7 +127,7 @@ function newMessage(req, res) {
 
 async function getUserspecificTrades(req, res){
   let tradeItems;
-  participant = req.params.participantId;
+  participant = req.params.Id;
   tradeItems=await fireData.ref('/trades').child(participant).once('value');
   let returnItems=[];
   tradeItems.forEach(function(childSnapshot){
@@ -125,7 +136,7 @@ async function getUserspecificTrades(req, res){
   return jsonResponse(res, returnItems);
   
 }
-function saveOffering(req,res){
+async function newTrade(req,res){
   let id=uuid();
   let newItem={
     tradeId:id,
@@ -135,16 +146,20 @@ function saveOffering(req,res){
     location:req.body.location,
     date: Date.now()
   }
-  fireData.ref('/trades').child(newItem.userId).child(id).set(newItem);
+
+  await geoRef.set(id, [req.body.location.lat,req.body.location.lng]);
+  await fireData.ref('/trades').child(newItem.userId).child(id).set(newItem);
   return jsonResponse(res, newItem);
   
 }
-function deleteOffer(req, res){
+function deleteTrade(req, res){
   fireData.ref('/trades').child(req.body.userId).child(req.body.tradeId).remove();
   return getUserspecificTrades(req, res);
 }
-function saveUser(req, res){
-  fireData.ref('/user').child(req.body.uid).set(req.body);
+async function saveUser(req, res){
+  var exists = await fireData.ref('/user').child(req.body.uid).once('value');
+  if(exists.val()== null) fireData.ref('/user').child(req.body.uid).set(req.body);
+  
   res.sendStatus(200);
 }
 async function getUser(uid){
@@ -152,31 +167,14 @@ async function getUser(uid){
   username=username.val().displayName;
   return username;
 }
-async function getNotification(req, res){
-  let messages=(await fireData.ref('/messages').child(req.body.convId).once('value'));
-  let returnMessages=[];
-  messages.forEach(function(partner){
-    tmp=partner.val();
-    returnMessages.push(tmp);
-  });
-  if(returnMessages[returnMessages.length - 1].from != req.body.me){
-    let username=await fireData.ref('/user').child(req.body.participantId).once('value');
-    username=username.val().displayName;
-    return jsonResponse(res, username);
-  }else{
-    return jsonResponse(res, false);
-  }
-  
-}
 async function getConversations(req, res){
-  conversationPartners=await fireData.ref('/conversations').child(req.params.participantId).once('value');
+  conversationPartners=await fireData.ref('/conversations').child(req.params.Id).once('value');
   let returnPartners=[]
   conversationPartners.forEach(function(partner){
     tmp=partner.val();
     returnPartners.push(tmp);
   });
   for(let i=0; i<returnPartners.length;++i){
-    console.log(returnPartners[i].tradeWith);
     returnPartners[i].traderName=await getUser(returnPartners[i].tradeWith);
   }
   return jsonResponse(res, returnPartners);
@@ -198,19 +196,45 @@ function newConversation(req,res){
   fireData.ref('/conversations').child(participant).child(convId).set(trade);
   res.sendStatus(200);
 }
+/* async function addUserAddress(req, res){
+  console.log("reached"+ req.body.location.lat);
+  fireData.ref('/user').child(req.body.userId).update({adress: [req.body.location.lng,req.body.location.lat]});
+  var val =await fireData.ref('/user').child(req.body.userId).once('value'); 
+  return jsonResponse(res, val);
+} */
+async function getFullUser(req,res){
+  participant = req.params.Id;
+  return jsonResponse(res, await fireData.ref('/user').child(participant).once('value'));
+}
+async function getNotification(req, res){
+  let messages=(await fireData.ref('/messages').child(req.body.convId).once('value'));
+  let returnMessages=[];
+  messages.forEach(function(partner){
+    tmp=partner.val();
+    returnMessages.push(tmp);
+  });
+  if(returnMessages[returnMessages.length - 1].from != req.body.me){
+    let username=await fireData.ref('/user').child(req.body.participantId).once('value');
+    username=username.val().displayName;
+    return jsonResponse(res, username);
+  }else{
+    return jsonResponse(res, false);
+  }
 
+}
 express()
   .use(express.static(path.join(__dirname, 'public/dist')))
   .use(express.json())
   .use(cors())
-  .get('/api/search', searchItems)
-  .get('/api/chat/:conversationId', /* auth.checkIfAuthenticated ,*/ chatMessages)
-  .post('/api/chat', /* auth.checkIfAuthenticated ,*/ newMessage)
-  .get('/api/conversations/:participantId', getConversations)
+  .post('/api/offerings', newTrade)
+  .get('/api/trades/:Id', getUserspecificTrades)
+  .post('/api/deleteTrade/:Id',deleteTrade)
+
+  .get('/api/chat/:conversationId', chatMessages)
+  .post('/api/chat',newMessage)
+  .get('/api/conversations/:Id', getConversations)
   .post('/api/conversations', newConversation)
-  .post('/api/offerings/:participantId',/* auth.checkIfAuthenticated, */ saveOffering)
-  .get('/api/trades/:participantId', getUserspecificTrades)
-  .post('/api/deleteTrade/:participantId',deleteOffer)
-  .post('/api/user',saveUser)
   .post('/api/notification/', getNotification)
+  .post('/api/user',saveUser)
+  .get('/api/user/:Id', getFullUser)
   .listen(PORT, () => console.log("Listening on "+PORT));

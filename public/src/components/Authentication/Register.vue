@@ -140,8 +140,11 @@ import firebase from "firebase";
 import firebaseui from 'firebaseui';
 import Modal from '../../modalPlugin.js'
 import "firebaseui/dist/firebaseui.css";
+import store from '../../store';
+import axios from 'axios';
 
 export default {
+  store,
   data() {
     return {
       form: {
@@ -181,22 +184,25 @@ export default {
     googleLogin(){
       const provider = new firebase.auth.GoogleAuthProvider();
       firebase.auth().signInWithPopup(provider).then((result)=>{
+        vm.saveUser(result.user);
         this.hide();
       }).catch((err)=>{
         alert("Something went wrong");
       });
     },
     submit() {
+      var vm = this;
       if(this.register){
         firebase
         .auth()
         .createUserWithEmailAndPassword(this.form.email, this.form.password)
         .then(data => {
+          vm.saveUser(data.user);
           data.user
             .updateProfile({
               displayName: this.form.name
             })
-            .then(() => {
+            .then((user) => {
               this.register=false;
               this.login=false;
               this.visible=false;
@@ -206,7 +212,8 @@ export default {
           this.error = err.message;
         });
       }else if(this.login){
-        firebase.auth().signInWithEmailAndPassword(this.form.email, this.form.password).then((user)=>{
+        firebase.auth().signInWithEmailAndPassword(this.form.email, this.form.password).then((data)=>{
+          vm.saveUser(data.user);
           this.hide();
         });
       }
@@ -215,6 +222,14 @@ export default {
       // making modal visible
       this.visible = true;
       this.loginMethods=true;
+    },
+    saveUser(user){
+      axios.post("/api/user", {uid:user.uid, displayName:user.displayName, email:user.email}).then(
+        ()=>{
+          axios.get('/api/user/'+user.uid).then((res)=>{
+            store.commit("SET_USER",res.data)});
+        }
+      );
     },
     hide() {
       // method for closing modal
